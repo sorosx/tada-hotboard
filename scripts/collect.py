@@ -9,6 +9,8 @@
   - Codelife 第三方聚合接口：大部分平台
   - 平台官方公开接口：新浪热榜、网易、澎湃、中新网 RSS，以及微博、头条的备用接口
 """
+import glob
+import gzip
 import json
 import os
 import re
@@ -150,16 +152,20 @@ def run(fn, *args):
 
 def main():
     now = datetime.now(BJ)
+    day_dir = os.path.join(ROOT, "data", now.strftime("%Y-%m-%d"))
+    # 工作流每小时触发两次以防 GitHub 跳过；同一个北京时间小时只存一份
+    if glob.glob(os.path.join(day_dir, now.strftime("%H") + "??.json*")) and "--force" not in sys.argv:
+        print(f"{now:%Y-%m-%d %H}点 已有快照，跳过")
+        return
     snap = {"fetched_at": now.isoformat(timespec="seconds"), "sources": {}}
     for sid, name, cid in CODELIFE:
         snap["sources"][sid] = {"name": name, "via": "codelife", **run(codelife, cid)}
     for sid, name, fn in OFFICIAL:
         snap["sources"][sid] = {"name": name, "via": "official", **run(fn)}
 
-    day_dir = os.path.join(ROOT, "data", now.strftime("%Y-%m-%d"))
     os.makedirs(day_dir, exist_ok=True)
-    path = os.path.join(day_dir, now.strftime("%H%M") + ".json")
-    with open(path, "w", encoding="utf-8") as f:
+    path = os.path.join(day_dir, now.strftime("%H%M") + ".json.gz")
+    with gzip.open(path, "wt", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, separators=(",", ":"))
 
     ok = sum(1 for s in snap["sources"].values() if s["ok"])
