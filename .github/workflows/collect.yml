@@ -3,7 +3,7 @@ name: 每小时采集热榜
 on:
   schedule:
     # GitHub 的 cron 用协调世界时（UTC），北京时间比它快 8 小时，整点对整点不受影响。
-    # 每小时第 7 分和第 37 分各触发一次，防止 GitHub 繁忙时跳过；同一北京时间小时只存一份快照。
+    # GitHub 繁忙时常跳过定时任务，所以这里只作补位；主力是“值守采集”工作流。
     - cron: "7,37 * * * *"
   workflow_dispatch: {}
 
@@ -18,34 +18,7 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    env:
-      TZ: Asia/Shanghai
     steps:
       - uses: actions/checkout@v4
-
-      - name: 采集一次快照（北京时间）
-        run: python3 scripts/collect.py
-
-      - name: 生成每日报告（钱包线索、新闻汇总）
-        if: always()
-        run: |
-          H=$(date +%H)
-          # 每晚 23 点生成当天报告；0 点再补一次前一天的完整版
-          if [ "$H" = "23" ]; then python3 scripts/build.py --date $(date +%F); fi
-          if [ "$H" = "00" ]; then python3 scripts/build.py --date $(date -d yesterday +%F); fi
-
-      - name: 提交数据
-        if: always()
-        run: |
-          git config user.name "hotboard-bot"
-          git config user.email "hotboard-bot@users.noreply.github.com"
-          git add data reports 2>/dev/null || git add data
-          if git diff --cached --quiet; then
-            echo "没有新数据"; exit 0
-          fi
-          git commit -m "快照 $(date '+%Y-%m-%d %H:%M')（北京时间）"
-          for i in 1 2 3; do
-            git pull --rebase --quiet && git push && exit 0
-            sleep 5
-          done
-          exit 1
+      - name: 采集一次（同一北京时间小时只存一份）
+        run: bash scripts/cycle.sh
