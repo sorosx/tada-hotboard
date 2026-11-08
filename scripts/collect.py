@@ -26,21 +26,21 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # id, 名称, codelife 榜单 ID
+# 2026-11 已移除（只给旧内容）：微信热文（10-30起停更）、雪球和新浪热榜日榜（11-07起停更）、
+# 新浪财经点击排行（经常整天不变）、网易新闻（百条里约六成是两三个月前的旧文）。
+# 对应函数 sina_hot、netease 保留备查，不再调用。
 CODELIFE = [
     ("weibo",        "微博热搜",       "KqndgxeLl9"),
     ("zhihu",        "知乎热榜",       "mproPpoq6O"),
     ("baidu",        "百度热点",       "Jb0vmloB1G"),
     ("toutiao",      "头条热榜",       "toutiao"),
-    ("wechat",       "微信热文",       "WnBe01o371"),
     ("douyin",       "抖音热点",       "DpQvNABoNE"),
     ("kuaishou",     "快手热榜",       "MZd7PrPerO"),
     ("tieba",        "百度贴吧",       "Om4ejxvxEN"),
     ("smzdm",        "什么值得买",     "K7GdagpoQy"),
     ("txnews",       "腾讯新闻·热问",  "12owgX0oNV"),
-    ("sinafinance",  "新浪财经·点击排行", "rx9ozj7oXb"),
     ("yicai",        "第一财经·周榜",  "0MdKam4ow1"),
     ("wallstreetcn", "华尔街见闻",     "G2me3ndwjq"),
-    ("xueqiu",       "雪球",           "X12owXzvNV"),
     ("ithome",       "IT之家",         "74Kvx59dkx"),
     ("kr36",         "36氪",           "Q1Vd5Ko85R"),
     ("huxiu",        "虎嗅",           "5VaobgvAj1"),
@@ -127,8 +127,6 @@ def toutiao_official():
 
 
 OFFICIAL = [
-    ("sinahot",   "新浪热榜（日榜）", sina_hot),
-    ("netease",   "网易新闻",         netease),
     ("thepaper",  "澎湃新闻",         thepaper),
     ("chinanews", "中国新闻网·即时",  chinanews),
     ("weibo_off", "微博热搜（官方接口）", weibo_official),

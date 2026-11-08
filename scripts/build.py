@@ -120,6 +120,9 @@ _B32 = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
 _NE_A = (22137385, datetime(2026, 8, 4, 20, 0, tzinfo=BJ))
 _NE_B = (22387864, datetime(2026, 11, 8, 10, 30, tzinfo=BJ))
 STALE_DAYS = 3        # 发布早于时段开始前 3 天的，算旧条目
+# 已从采集里移除、只给旧内容的来源；旧快照里还有它们，读报告时一并跳过
+DROPPED = {"wechat", "sinafinance", "xueqiu", "sinahot", "netease"}
+STALE_SHARE = 0.5     # 某来源能估出日期的条目里，超过一半是旧文，就提醒移除
 FROZEN_HOURS = 12     # 时段跨度超过 12 小时、但某来源一条新标题都没有，算停更
 
 
@@ -177,7 +180,10 @@ def merge(snaps):
         stamp = t.strftime("%m-%d %H:%M")
         s = load(p)
         for sid, src in s["sources"].items():
-            h = health.setdefault(src["name"], {"ok": 0, "fail": 0, "last_error": "", "frozen": sid in frozen})
+            if sid in DROPPED:
+                continue
+            h = health.setdefault(src["name"], {"ok": 0, "fail": 0, "last_error": "", "frozen": sid in frozen,
+                                                "dated": 0, "old": 0})
             if src["ok"]:
                 h["ok"] += 1
             else:
@@ -185,7 +191,9 @@ def merge(snaps):
                 h["last_error"] = src.get("error", "")
             if sid in frozen:
                 continue  # 停更来源的条目全是旧的，不计入
+            urls = h.setdefault("urls", [])
             for it in src["items"]:
+                urls.append(it["url"])
                 k = key(it["title"])
                 if len(k) < 4:
                     continue
@@ -198,6 +206,9 @@ def merge(snaps):
                     b["best_rank"], b["hot"] = it["rank"], it.get("hot", "")
     rows = []
     stale_before = snaps[0][0] - timedelta(days=STALE_DAYS)
+    for h in health.values():
+        dates = [d for d in (pub_date(u) for u in h.pop("urls", ())) if d]
+        h["dated"], h["old"] = len(dates), sum(d < stale_before for d in dates)
     for x in topics.values():
         boards = x["boards"]
         # 微博/头条有两个接口，按平台计数时合并
@@ -252,6 +263,10 @@ def write(label, snaps, rows, health, outdir):
     bad = [f"{n}（失败{h['fail']}次：{h['last_error'][:50]}）" for n, h in health.items() if h["fail"]]
     frozen = [n for n, h in health.items() if h.get("frozen")]
     head += ["来源健康：" + (("；".join(bad)) if bad else f"{len(health)} 个来源抓取都成功"), ""]
+    oldsrc = [f"{n}（{h['old']}/{h['dated']}）" for n, h in health.items()
+              if h.get("dated", 0) >= 5 and h["old"] / h["dated"] > STALE_SHARE]
+    if oldsrc:
+        head += [f"**疑似旧内容来源**（各次快照里能估出日期的条目，一半以上是旧文，建议从 collect.py 移除）：{'、'.join(oldsrc)}", ""]
     if frozen:
         head += [f"**停更来源**（整个时段一条新标题都没有，条目已全部排除）：{'、'.join(frozen)}", ""]
     gaps = [f"{a:%m-%d %H:%M}→{b:%H:%M}" for (a, _), (b, _) in zip(snaps, snaps[1:]) if b - a > timedelta(minutes=95)]
