@@ -113,18 +113,78 @@ def snapshots(start, end):
     return sorted(out)
 
 
+# ---------- 旧条目识别 ----------
+# 网易文章编号（/article/后8位，0-9A-V 的32进制）前5位随发布时间单调递增，约每天 +2609。
+# 用两个已核实的锚点线性换算：L3IH9 ≈ 2026-08-04 20:00，LB74O ≈ 2026-11-08 10:30（北京时间）。
+_B32 = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+_NE_A = (22137385, datetime(2026, 8, 4, 20, 0, tzinfo=BJ))
+_NE_B = (22387864, datetime(2026, 11, 8, 10, 30, tzinfo=BJ))
+STALE_DAYS = 3        # 发布早于时段开始前 3 天的，算旧条目
+FROZEN_HOURS = 12     # 时段跨度超过 12 小时、但某来源一条新标题都没有，算停更
+
+
+def _netease_time(code):
+    n = 0
+    for c in code[:5]:
+        n = n * 32 + _B32.index(c)
+    (a, ta), (b, tb) = _NE_A, _NE_B
+    return ta + (tb - ta) * ((n - a) / (b - a))
+
+
+def pub_date(url):
+    """从链接估计发布时间：网易编号换算，或链接里的日期。拿不到返回 None。"""
+    url = url or ""
+    m = re.search(r"163\.com/(?:[a-z]+/)*article/([0-9A-V]{8})", url)
+    if m:
+        try:
+            return _netease_time(m.group(1))
+        except (ValueError, ZeroDivisionError):
+            return None
+    for pat in (r"(20\d\d)-(\d\d)-(\d\d)", r"(20\d\d)/(\d\d)-(\d\d)", r"(20\d\d)-(\d\d)/(\d\d)",
+                r"(20\d\d)(\d\d)(\d\d)(?!\d)", r"/(20\d\d)(\d\d)(\d\d)[A-Z]"):
+        m = re.search(pat, url)
+        if m:
+            try:
+                return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)), 12, tzinfo=BJ)
+            except ValueError:
+                continue
+    return None
+
+
+def frozen_sources(snaps):
+    """时段内首尾快照标题完全没变化的来源（例如接口停更、只返回旧列表）。"""
+    if len(snaps) < 2 or (snaps[-1][0] - snaps[0][0]) < timedelta(hours=FROZEN_HOURS):
+        return {}
+    first, last = load(snaps[0][1])["sources"], load(snaps[-1][1])["sources"]
+    seen_all = {}
+    for _, p in snaps:
+        for sid, src in load(p)["sources"].items():
+            seen_all.setdefault(sid, set()).update(it["title"] for it in src["items"])
+    out = {}
+    for sid, src in last.items():
+        if not src.get("ok") or sid not in first or not first[sid].get("ok"):
+            continue
+        before = {it["title"] for it in first[sid]["items"]}
+        if seen_all.get(sid, set()) <= before:
+            out[sid] = src["name"]
+    return out
+
+
 def merge(snaps):
     topics, health = {}, {}
+    frozen = frozen_sources(snaps)
     for t, p in snaps:
         stamp = t.strftime("%m-%d %H:%M")
         s = load(p)
         for sid, src in s["sources"].items():
-            h = health.setdefault(src["name"], {"ok": 0, "fail": 0, "last_error": ""})
+            h = health.setdefault(src["name"], {"ok": 0, "fail": 0, "last_error": "", "frozen": sid in frozen})
             if src["ok"]:
                 h["ok"] += 1
             else:
                 h["fail"] += 1
                 h["last_error"] = src.get("error", "")
+            if sid in frozen:
+                continue  # 停更来源的条目全是旧的，不计入
             for it in src["items"]:
                 k = key(it["title"])
                 if len(k) < 4:
@@ -137,13 +197,16 @@ def merge(snaps):
                 if it["rank"] < b["best_rank"]:
                     b["best_rank"], b["hot"] = it["rank"], it.get("hot", "")
     rows = []
+    stale_before = snaps[0][0] - timedelta(days=STALE_DAYS)
     for x in topics.values():
         boards = x["boards"]
         # 微博/头条有两个接口，按平台计数时合并
         platforms = {re.sub(r"（官方接口）$", "", n) for n in boards}
         title = x["title"]
         w, r = hits(title, WALLET), hits(title, REDLINE)
+        pd = pub_date(x["url"])
         rows.append({
+            "pub": pd.strftime("%m-%d") if pd else "", "stale": bool(pd and pd < stale_before),
             "title": title, "url": x["url"], "first_seen": x["first_seen"], "last_seen": x["last_seen"],
             "snapshots": len(x["seen"]), "platforms": len(platforms),
             "best_rank": min(b["best_rank"] for b in boards.values()),
@@ -155,7 +218,7 @@ def merge(snaps):
 
 
 def is_wallet(r):
-    if not r["wallet_words"] or r["redline_words"]:
+    if not r["wallet_words"] or r["redline_words"] or r.get("stale"):
         return False
     # 只命中“AI”“价”这类泛词又属于文娱体育的，剔除
     if r["category"] == "文娱体育" and len(r["wallet_words"]) < 2:
@@ -168,13 +231,14 @@ def heat(r):
 
 
 def table(rows, extra=False):
-    out = ["| # | 标题 | 热度 | 平台数 | 在榜次数 | 最高排名 | 首次—最后 | 平台(排名) |" + (" 命中词 |" if extra else ""),
-           "|---|---|---|---|---|---|---|---|" + ("---|" if extra else "")]
+    out = ["| # | 标题 | 热度 | 平台数 | 在榜次数 | 最高排名 | 首次—最后 | 链接日期 | 平台(排名) |" + (" 命中词 |" if extra else ""),
+           "|---|---|---|---|---|---|---|---|---|" + ("---|" if extra else "")]
     for i, r in enumerate(rows, 1):
         t = r["title"].replace("|", "｜")
         b = "、".join(f"{n}{k}" for n, k in r["boards"].items())
+        pub = (r.get("pub") or "—") + ("（旧）" if r.get("stale") else "")
         line = (f"| {i} | [{t}]({r['url']}) | {heat(r)} | {r['platforms']} | {r['snapshots']} | {r['best_rank']} | "
-                f"{r['first_seen']}—{r['last_seen']} | {b} |")
+                f"{r['first_seen']}—{r['last_seen']} | {pub} | {b} |")
         if extra:
             line += " " + "、".join(r["wallet_words"][:5]) + " |"
         out.append(line)
@@ -186,18 +250,30 @@ def write(label, snaps, rows, health, outdir):
     head = [f"时间范围：{label}；快照 {len(snaps)} 次（" + "、".join(t.strftime("%H:%M") for t, _ in snaps) + "）",
             "", "热度：高＝3个及以上平台或在榜8次以上；中＝2个平台或在榜3次以上；其余为低。", ""]
     bad = [f"{n}（失败{h['fail']}次：{h['last_error'][:50]}）" for n, h in health.items() if h["fail"]]
-    head += ["来源健康：" + (("；".join(bad)) if bad else f"{len(health)} 个来源全部正常"), ""]
+    frozen = [n for n, h in health.items() if h.get("frozen")]
+    head += ["来源健康：" + (("；".join(bad)) if bad else f"{len(health)} 个来源抓取都成功"), ""]
+    if frozen:
+        head += [f"**停更来源**（整个时段一条新标题都没有，条目已全部排除）：{'、'.join(frozen)}", ""]
+    gaps = [f"{a:%m-%d %H:%M}→{b:%H:%M}" for (a, _), (b, _) in zip(snaps, snaps[1:]) if b - a > timedelta(minutes=95)]
+    if gaps:
+        head += [f"**快照缺口**（相邻两次超过95分钟）：{'、'.join(gaps)}", ""]
 
+    stale = [r for r in rows if r.get("stale")]
+    stale_wallet = [r for r in stale if r["wallet_words"] and not r["redline_words"]]
     wallet = [r for r in rows if is_wallet(r)]
     w = [f"# 钱包线索 {label}", ""] + head + [
-        f"共 {len(rows)} 个去重标题，其中钱包相关 {len(wallet)} 个（关键词粗筛，宁多勿漏；**全部未核实**）。", ""]
+        f"共 {len(rows)} 个去重标题，其中钱包相关 {len(wallet)} 个（关键词粗筛，宁多勿漏；**全部未核实**）。"
+        f"另有 {len(stale_wallet)} 个钱包相关标题按链接日期判为旧文（早于时段开始 {STALE_DAYS} 天以上），已排到文末。",
+        "", "“链接日期”是从链接估出来的发布日期（网易按文章编号换算，误差约一天），只作参考，仍要从原文确认。", ""]
     w += table(wallet, extra=True)
+    if stale_wallet:
+        w += ["", f"## 已排除：旧文（{len(stale_wallet)}）", ""] + table(stale_wallet, extra=True)
     with open(os.path.join(outdir, f"{label}_钱包线索.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(w) + "\n")
 
     n = [f"# 新闻汇总 {label}", ""] + head + [f"共 {len(rows)} 个去重标题。", "",
                                              "## 重点（2个及以上平台，或在榜3次以上）", ""]
-    key_rows = [r for r in rows if r["platforms"] >= 2 or r["snapshots"] >= 3]
+    key_rows = [r for r in rows if (r["platforms"] >= 2 or r["snapshots"] >= 3) and not r.get("stale")]
     n += table(key_rows)
     order = ["时政国际", "财经资产", "民生消费", "社会其他", "科技数码", "文娱体育", "灾难事故"]
     for c in order:

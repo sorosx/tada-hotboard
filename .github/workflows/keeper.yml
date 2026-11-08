@@ -1,7 +1,9 @@
-name: 值守采集（每次连续工作约6小时）
+name: 值守采集（每次连续工作约6小时，结束前自动接力）
 
-# GitHub 的定时触发经常被跳过。这个工作流一旦启动，就在同一台机器上
-# 每小时采集一次，连续约 5 小时 50 分钟；多个时间点触发，接力覆盖全天。
+# GitHub 的定时触发经常被跳过或推迟几小时（实测每天只启动 3 到 4 次），
+# 所以每段值守快结束时，自己再启动下一段（workflow_dispatch 允许用 GITHUB_TOKEN 触发），
+# 新的一段排在 concurrency 队列里，上一段一结束就接上，不再靠定时任务续命。
+# 定时触发只作兜底：接力链万一断了，下次定时启动时重新接上。
 # 同一北京时间小时只存一份，所以和“每小时采集热榜”重叠也不会重复。
 on:
   schedule:
@@ -10,6 +12,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 concurrency:
   group: keeper
@@ -21,14 +24,23 @@ jobs:
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - name: 每小时采集，循环约 5 小时 50 分钟
+      - name: 每小时采集，约 5 小时 40 分钟后交给下一段
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          end=$(( $(date +%s) + 350*60 ))
+          start=$(date +%s)
+          end=$(( start + 340*60 ))
+          relayed=0
           while :; do
             bash scripts/cycle.sh || true
-            # 睡到下一个整点后 3 分钟
             now=$(date +%s)
+            # 睡到下一个整点后 3 分钟
             next=$(( (now/3600 + 1)*3600 + 180 ))
-            [ $next -ge $end ] && break
+            if [ $next -ge $end ]; then
+              # 先启动下一段（它会在队列里等这一段结束），再退出
+              gh workflow run keeper.yml --ref "${GITHUB_REF_NAME}" && relayed=1 || echo "接力启动失败，等定时任务兜底"
+              break
+            fi
             sleep $(( next - now ))
           done
+          echo "本段结束，接力：$relayed"
