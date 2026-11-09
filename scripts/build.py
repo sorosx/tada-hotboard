@@ -7,6 +7,9 @@
 用法：
   python scripts/build.py --date 2026-10-30          # 北京时间整天，写入 reports/
   python scripts/build.py --last 24 --out /some/dir  # 截至现在的过去 24 小时
+  python scripts/build.py --edition 午间 --out /some/dir  # 前一天19:00至当天12:00（未到12点就到现在）
+  python scripts/build.py --edition 晚间 --out /some/dir  # 前一天19:00至当天19:00（未到19点就到现在）
+  python scripts/build.py --edition 晚间 --day 2026-11-08 --out /some/dir  # 补做某天
 同时删除 data/ 里 KEEP_DAYS 天以前的快照。
 
 分类是关键词规则，只做粗筛：钱包线索宁多勿漏，最终由人或 Claude 判断和核实。
@@ -314,10 +317,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="北京时间日期 YYYY-MM-DD，整天")
     ap.add_argument("--last", type=int, help="截至现在的过去 N 小时")
+    ap.add_argument("--edition", choices=["午间", "晚间"],
+                    help="选题单固定时段：前一天19:00起，午间到当天12:00，晚间到当天19:00（未到点就到现在）")
+    ap.add_argument("--day", help="配合 --edition：选题单日期 YYYY-MM-DD，默认今天（补做时用）")
     ap.add_argument("--out", default=os.path.join(ROOT, "reports"))
     a = ap.parse_args()
     now = datetime.now(BJ)
-    if a.last:
+    if a.edition:
+        day = datetime.strptime(a.day, "%Y-%m-%d").replace(tzinfo=BJ) if a.day else \
+            now.replace(hour=0, minute=0, second=0, microsecond=0)
+        start = day - timedelta(hours=5)                      # 前一天 19:00
+        end = day + timedelta(hours=12 if a.edition == "午间" else 19)
+        label = f"{start:%m%d-%H%M}至{min(end, now):%m%d-%H%M}"
+        end = min(end, now + timedelta(minutes=1))
+    elif a.last:
         start, end = now - timedelta(hours=a.last), now + timedelta(minutes=1)
         label = f"{start:%m%d-%H%M}至{now:%m%d-%H%M}"
     else:
