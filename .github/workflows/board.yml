@@ -8,13 +8,9 @@ on:
   workflow_dispatch:
     inputs:
       edition:
-        description: "手动生成的报告版次（留空则只采集）"
+        description: "手动生成的报告版次：午间或晚间；留空则只采集"
         required: false
-        type: choice
-        options:
-          - ""
-          - 午间
-          - 晚间
+        type: string
 
 permissions:
   contents: write
