@@ -259,9 +259,9 @@ def table(rows, extra=False):
     return out
 
 
-def write(label, snaps, rows, health, outdir):
+def write(label, snaps, rows, health, outdir, period=None):
     os.makedirs(outdir, exist_ok=True)
-    head = [f"时间范围：{label}；快照 {len(snaps)} 次（" + "、".join(t.strftime("%H:%M") for t, _ in snaps) + "）",
+    head = [f"时间范围：{period or label}；快照 {len(snaps)} 次（" + "、".join(t.strftime("%H:%M") for t, _ in snaps) + "）",
             "", "热度：高＝3个及以上平台或在榜8次以上；中＝2个平台或在榜3次以上；其余为低。", ""]
     bad = [f"{n}（失败{h['fail']}次：{h['last_error'][:50]}）" for n, h in health.items() if h["fail"]]
     frozen = [n for n, h in health.items() if h.get("frozen")]
@@ -317,19 +317,21 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="北京时间日期 YYYY-MM-DD，整天")
     ap.add_argument("--last", type=int, help="截至现在的过去 N 小时")
-    ap.add_argument("--edition", choices=["午间", "晚间"],
+    ap.add_argument("--edition", choices=["午间", "晚间", "午間", "晚間"],
                     help="选题单固定时段：前一天19:00起，午间到当天12:00，晚间到当天19:00（未到点就到现在）")
     ap.add_argument("--day", help="配合 --edition：选题单日期 YYYY-MM-DD，默认今天（补做时用）")
     ap.add_argument("--out", default=os.path.join(ROOT, "reports"))
     a = ap.parse_args()
     now = datetime.now(BJ)
     if a.edition:
+        edition = {"午間": "午间", "晚間": "晚间"}.get(a.edition, a.edition)
         day = datetime.strptime(a.day, "%Y-%m-%d").replace(tzinfo=BJ) if a.day else \
             now.replace(hour=0, minute=0, second=0, microsecond=0)
-        start = day - timedelta(hours=5)                      # 前一天 19:00
-        end = day + timedelta(hours=12 if a.edition == "午间" else 19)
-        label = f"{start:%m%d-%H%M}至{min(end, now):%m%d-%H%M}"
-        end = min(end, now + timedelta(minutes=1))
+        start = day - timedelta(hours=5)  # 前一天 19:00
+        scheduled_end = day + timedelta(hours=12 if edition == "午间" else 19)
+        end = min(scheduled_end, now + timedelta(minutes=1))
+        label = f"{day:%Y-%m-%d}_{edition}"
+        period = f"{start:%Y-%m-%d %H:%M} 至 {min(scheduled_end, now):%Y-%m-%d %H:%M}"
     elif a.last:
         start, end = now - timedelta(hours=a.last), now + timedelta(minutes=1)
         label = f"{start:%m%d-%H%M}至{now:%m%d-%H%M}"
@@ -342,7 +344,7 @@ def main():
         print("这段时间没有快照")
         return
     rows, health = merge(snaps)
-    total, wallet = write(label, snaps, rows, health, a.out)
+    total, wallet = write(label, snaps, rows, health, a.out, locals().get("period"))
     print(f"{label}: {len(snaps)} 次快照，{total} 个去重标题，钱包线索 {wallet} 个 → {a.out}")
     prune()
 
