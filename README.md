@@ -21,6 +21,26 @@ python3 scripts/build.py --last 24 --out 输出目录     # 截至现在的过�
 python3 scripts/build.py --date 2026-10-30            # 某一整天
 ```
 
+## 午间/晚间钱包线索自动报告
+
+`.github/workflows/board.yml` 每小时运行一次采集，并在北京时间 12:00、19:00 自动生成当期报告（GitHub Cron 使用 UTC：04:00、11:00）。报告提交到 `reports/`：
+
+- `YYYY-MM-DD_午间_钱包线索.md`
+- `YYYY-MM-DD_午间_新闻汇总.md`
+- `YYYY-MM-DD_晚间_钱包线索.md`
+- `YYYY-MM-DD_晚间_新闻汇总.md`
+- 同时生成 `YYYY-MM-DD_版次_全部.json` 供后续程序读取。
+
+时段均按北京时间计算：午间为前一天 19:00 至当天 12:00；晚间为前一天 19:00 至当天 19:00。手动补做示例：
+
+```bash
+python3 scripts/build.py --edition 午间
+python3 scripts/build.py --edition 晚间
+python3 scripts/build.py --edition 晚間 --day 2026-11-19
+```
+
+钱包线索为关键词粗筛，不代表事实核实或投资建议。红线命中会排除钱包线索，但仍保留在新闻汇总中；链接无法可靠估算日期的条目不会武断标为旧文。当前仅生成 Markdown/JSON 并提交仓库，未配置 Telegram、Server酱等外部推送；需要时可在仓库 Actions Secrets 配置 Webhook 后再增加通知步骤。
+
 ## 运行方式
 
 主力是“值守采集”：每段连续每小时采集约 5 小时 40 分，结束前自己启动下一段接力（GitHub 定时任务实测每天只启动 3 到 4 次，靠定时续命会留下几小时缺口）。“每小时采集热榜”和值守的定时触发只作兜底。同一小时只存一份。只用 Python 标准库。
