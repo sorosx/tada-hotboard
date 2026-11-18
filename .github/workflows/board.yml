@@ -4,7 +4,7 @@ on:
   schedule:
     # UTC 0-23 每小时运行；北京时间为 UTC+8。
     # 04:00 UTC = 北京时间 12:00；11:00 UTC = 北京时间 19:00。
-    - cron: "0 * * * *"
+    - cron: "5 * * * *"
   workflow_dispatch:
     inputs:
       edition:
