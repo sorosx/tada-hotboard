@@ -1,0 +1,83 @@
+name: 热榜采集与钱包线索报告
+
+on:
+  schedule:
+    # UTC 0-23 每小时运行；北京时间为 UTC+8。
+    # 04:00 UTC = 北京时间 12:00；11:00 UTC = 北京时间 19:00。
+    - cron: "0 * * * *"
+  workflow_dispatch:
+    inputs:
+      edition:
+        description: "手动生成的报告版次（留空则只采集）"
+        required: false
+        type: choice
+        options:
+          - ""
+          - 午间
+          - 晚间
+
+permissions:
+  contents: write
+
+concurrency:
+  group: tada-hotboard-board
+  cancel-in-progress: false
+
+jobs:
+  collect-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 采集本小时快照
+        run: bash scripts/cycle.sh
+
+      - name: 判断是否生成午间/晚间版
+        id: edition
+        shell: bash
+        env:
+          MANUAL_EDITION: ${{ inputs.edition }}
+        run: |
+          hour=$(TZ=Asia/Shanghai date +%H)
+          edition=""
+          if [ "$MANUAL_EDITION" = "午间" ] || [ "$MANUAL_EDITION" = "晚间" ]; then
+            edition="$MANUAL_EDITION"
+          elif [ "$hour" = "12" ]; then
+            edition="午间"
+          elif [ "$hour" = "19" ]; then
+            edition="晚间"
+          fi
+          echo "edition=$edition" >> "$GITHUB_OUTPUT"
+          echo "北京时间小时=$hour，报告版次=$edition"
+
+      - name: 生成钱包线索与新闻汇总
+        if: steps.edition.outputs.edition != ''
+        env:
+          EDITION: ${{ steps.edition.outputs.edition }}
+        run: |
+          python scripts/build.py --edition "$EDITION"
+
+      - name: 提交报告
+        if: steps.edition.outputs.edition != ''
+        shell: bash
+        run: |
+          git config user.name "hotboard-bot"
+          git config user.email "hotboard-bot@users.noreply.github.com"
+          git add reports/
+          if git diff --cached --quiet; then
+            echo "报告无变化"
+            exit 0
+          fi
+          git commit -m "报告：$(TZ=Asia/Shanghai date '+%Y-%m-%d %H:%M')（北京时间）"
+          git pull --rebase origin main
+          git push origin HEAD:main
