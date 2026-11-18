@@ -189,7 +189,7 @@ def merge(snaps):
         for sid, src in s["sources"].items():
             if sid in DROPPED:
                 continue
-            h = health.setdefault(src["name"], {"ok": 0, "fail": 0, "last_error": "", "frozen": sid in frozen,
+            h = health.setdefault(src["name"], {"sid": sid, "ok": 0, "fail": 0, "last_error": "", "frozen": sid in frozen,
                                                 "dated": 0, "old": 0})
             if src["ok"]:
                 h["ok"] += 1
@@ -216,8 +216,20 @@ def merge(snaps):
     for h in health.values():
         dates = [d for d in (pub_date(u) for u in h.pop("urls", ())) if d]
         h["dated"], h["old"] = len(dates), sum(d < stale_before for d in dates)
+    # 链接日期可识别的条目中，超过一半早于窗口起点3天的来源，整源排除。
+    stale_source_ids = {
+        h["sid"] for h in health.values()
+        if h.get("dated", 0) >= 5 and h["old"] / h["dated"] > STALE_SHARE
+    }
+    stale_source_names = {name for name, h in health.items() if h.get("sid") in stale_source_ids}
+    for x in topics.values():
+        for source_name in list(x["boards"]):
+            if source_name in stale_source_names:
+                del x["boards"][source_name]
     for x in topics.values():
         boards = x["boards"]
+        if not boards:
+            continue
         # 微博/头条有两个接口，按平台计数时合并
         platforms = {re.sub(r"（官方接口）$", "", n) for n in boards}
         title = x["title"]
