@@ -17,6 +17,7 @@ import re
 import sys
 import time
 import urllib.request
+import urllib.parse
 import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 
@@ -117,7 +118,7 @@ def chinanews():
 def weibo_official():
     j = json.loads(get("https://weibo.com/ajax/side/hotSearch", referer="https://weibo.com/"))
     return norm({"title": d.get("word") or d.get("note"),
-                 "url": "https://s.weibo.com/weibo?q=" + urllib.request.quote("#" + (d.get("word") or "") + "#"),
+                 "url": "https://s.weibo.com/weibo?q=" + urllib.parse.quote("#" + (d.get("word") or "") + "#"),
                  "hot": d.get("num")} for d in j["data"]["realtime"])
 
 
