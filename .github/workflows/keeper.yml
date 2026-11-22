@@ -1,10 +1,6 @@
 name: 值守采集（每次连续工作约6小时，结束前自动接力）
 
-# GitHub 的定时触发经常被跳过或推迟几小时（实测每天只启动 3 到 4 次），
-# 所以每段值守快结束时，自己再启动下一段（workflow_dispatch 允许用 GITHUB_TOKEN 触发），
-# 新的一段排在 concurrency 队列里，上一段一结束就接上，不再靠定时任务续命。
-# 定时触发只作兜底：接力链万一断了，下次定时启动时重新接上。
-# 同一北京时间小时只存一份，所以和“每小时采集热榜”重叠也不会重复。
+# 值守任务每小时采集；定时触发作为接力链中断时的兜底。
 on:
   schedule:
     - cron: "11 0,3,6,9,12,15,18,21 * * *"
@@ -24,23 +20,30 @@ jobs:
     timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
-      - name: 每小时采集，约 5 小时 40 分钟后交给下一段
+        with:
+          fetch-depth: 0
+      - name: 每小时采集并在午间、晚间生成报告
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           start=$(date +%s)
           end=$(( start + 340*60 ))
           relayed=0
+          failures=0
           while :; do
-            bash scripts/cycle.sh || true
+            if ! bash scripts/cycle.sh; then
+              failures=$((failures + 1))
+              echo "本轮采集或报告/推送失败，继续下一轮；累计失败：$failures"
+            fi
+
             now=$(date +%s)
-            # 睡到下一个整点后 3 分钟
-            next=$(( (now/3600 + 1)*3600 + 180 ))
-            if [ $next -ge $end ]; then
-              # 先启动下一段（它会在队列里等这一段结束），再退出
+            # 在下一个北京时间整点采集，报告窗口可纳入 12:00/19:00 边界快照。
+            next=$(( (now/3600 + 1)*3600 ))
+            if [ "$next" -ge "$end" ]; then
               gh workflow run keeper.yml --ref "${GITHUB_REF_NAME}" && relayed=1 || echo "接力启动失败，等定时任务兜底"
               break
             fi
             sleep $(( next - now ))
           done
-          echo "本段结束，接力：$relayed"
+          echo "本段结束，接力：$relayed；失败轮次：$failures"
+          if [ "$failures" -gt 0 ]; then exit 1; fi
