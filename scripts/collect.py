@@ -161,7 +161,7 @@ def main():
                 op = gzip.open if old_path.endswith(".gz") else open
                 with op(old_path, "rt", encoding="utf-8") as f:
                     old = json.load(f)
-                if any(src.get("ok") for src in old.get("sources", {}).values()):
+                if sum(1 for src in old.get("sources", {}).values() if src.get("ok")) >= 8:
                     print(f"{now:%Y-%m-%d %H}点 已有有效快照，跳过")
                     return
             except (OSError, ValueError, json.JSONDecodeError):
