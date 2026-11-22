@@ -317,8 +317,11 @@ def write(label, snaps, rows, health, outdir, period=None):
     with open(os.path.join(outdir, f"{label}_新闻汇总.md"), "w", encoding="utf-8") as f:
         f.write("\n".join(n) + "\n")
     with open(os.path.join(outdir, f"{label}_全部.json"), "w", encoding="utf-8") as f:
-        json.dump({"label": label, "snapshots": [t.isoformat() for t, _ in snaps], "health": health,
-                   "topics": rows}, f, ensure_ascii=False)
+        json.dump({"label": label, "period": period or label,
+                   "timezone": "Asia/Shanghai",
+                   "snapshots": [t.isoformat() for t, _ in snaps],
+                   "health": health, "topics": rows},
+                  f, ensure_ascii=False, separators=(",", ":"))
     return len(rows), len(wallet)
 
 
@@ -345,9 +348,10 @@ def main():
             now.replace(hour=0, minute=0, second=0, microsecond=0)
         start = day - timedelta(hours=5)  # 前一天 19:00
         scheduled_end = day + timedelta(hours=12 if edition == "午间" else 19)
-        end = min(scheduled_end, now + timedelta(minutes=1))
+        # 采集任务在整点启动；给边界快照留 1 分钟窗口，纳入 12:00/19:00 这次快照。
+        end = min(scheduled_end + timedelta(minutes=1), now + timedelta(minutes=1))
         label = f"{day:%Y-%m-%d}_{edition}"
-        period = f"{start:%Y-%m-%d %H:%M} 至 {min(scheduled_end, now):%Y-%m-%d %H:%M}"
+        period = f"{start:%Y-%m-%d %H:%M} 至 {scheduled_end:%Y-%m-%d %H:%M}"
     elif a.last:
         start, end = now - timedelta(hours=a.last), now + timedelta(minutes=1)
         label = f"{start:%m%d-%H%M}至{now:%m%d-%H%M}"
