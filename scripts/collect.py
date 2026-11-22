@@ -189,6 +189,10 @@ def main():
     with gzip.open(path, "wt", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, separators=(",", ":"))
     print(f"{path}: {ok}/{total} 个来源成功，共 {n} 条")
+    # 部分成功的数据照常保存；成功来源过少时让值守任务明确记录异常。
+    if ok < 8:
+        print(f"来源成功数低于最低预期（8/{total}），本轮标记为异常")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
