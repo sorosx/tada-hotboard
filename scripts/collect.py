@@ -48,7 +48,7 @@ CODELIFE = [
 ]
 
 
-def get(url, timeout=20, accept="application/json, text/plain, */*", referer=None):
+def get(url, timeout=15, accept="application/json, text/plain, */*", referer=None):
     headers = {"User-Agent": UA, "Accept": accept, "Accept-Language": "zh-CN,zh;q=0.9"}
     if referer:
         headers["Referer"] = referer
@@ -145,37 +145,50 @@ def run(fn, *args):
             last = "空列表"
         except Exception as e:  # noqa: BLE001
             last = f"{type(e).__name__}: {e}"[:200]
-        time.sleep(2)
+        if attempt == 0:
+            time.sleep(2)
     return {"ok": False, "error": last, "items": []}
 
 
 def main():
     now = datetime.now(BJ)
     day_dir = os.path.join(ROOT, "data", now.strftime("%Y-%m-%d"))
-    # 工作流每小时触发两次以防 GitHub 跳过；同一个北京时间小时只存一份
-    if glob.glob(os.path.join(day_dir, now.strftime("%H") + "??.json*")) and "--force" not in sys.argv:
-        print(f"{now:%Y-%m-%d %H}点 已有快照，跳过")
-        return
+    # 同一北京时间小时只保留一份有效快照；全源失败的旧快照不阻止重试。
+    if "--force" not in sys.argv:
+        candidates = glob.glob(os.path.join(day_dir, now.strftime("%H") + "??.json*"))
+        for old_path in candidates:
+            try:
+                op = gzip.open if old_path.endswith(".gz") else open
+                with op(old_path, "rt", encoding="utf-8") as f:
+                    old = json.load(f)
+                if any(src.get("ok") for src in old.get("sources", {}).values()):
+                    print(f"{now:%Y-%m-%d %H}点 已有有效快照，跳过")
+                    return
+            except (OSError, ValueError, json.JSONDecodeError):
+                pass
+            os.remove(old_path)
     snap = {"fetched_at": now.isoformat(timespec="seconds"), "sources": {}}
     for sid, name, cid in CODELIFE:
         snap["sources"][sid] = {"name": name, "via": "codelife", **run(codelife, cid)}
     for sid, name, fn in OFFICIAL:
         snap["sources"][sid] = {"name": name, "via": "official", **run(fn)}
 
+    ok = sum(1 for s in snap["sources"].values() if s["ok"])
+    total = len(snap["sources"])
+    n = sum(len(s["items"]) for s in snap["sources"].values())
+    for sid, s in snap["sources"].items():
+        if not s["ok"]:
+            print(f"  失败 {sid} {s['name']}: {s['error']}")
+    # 全部来源失败时不保存空快照，确保下一轮仍可重试。
+    if not ok:
+        print(f"{now:%Y-%m-%d %H:%M} 所有 {total} 个来源均失败，本次不保存快照")
+        sys.exit(1)
+
     os.makedirs(day_dir, exist_ok=True)
     path = os.path.join(day_dir, now.strftime("%H%M") + ".json.gz")
     with gzip.open(path, "wt", encoding="utf-8") as f:
         json.dump(snap, f, ensure_ascii=False, separators=(",", ":"))
-
-    ok = sum(1 for s in snap["sources"].values() if s["ok"])
-    total = len(snap["sources"])
-    n = sum(len(s["items"]) for s in snap["sources"].values())
     print(f"{path}: {ok}/{total} 个来源成功，共 {n} 条")
-    for sid, s in snap["sources"].items():
-        if not s["ok"]:
-            print(f"  失败 {sid} {s['name']}: {s['error']}")
-    # 一个来源都没成功时让工作流报错，方便发现问题
-    sys.exit(0 if ok else 1)
 
 
 if __name__ == "__main__":
